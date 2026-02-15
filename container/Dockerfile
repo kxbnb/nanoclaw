@@ -32,6 +32,10 @@ ENV PLAYWRIGHT_CHROMIUM_EXECUTABLE_PATH=/usr/bin/chromium
 # Install agent-browser and claude-code globally
 RUN npm install -g agent-browser @anthropic-ai/claude-code
 
+# Install chrome-agent from local source
+COPY chrome-agent /tmp/chrome-agent
+RUN cd /tmp/chrome-agent && npm install --omit=dev && npm link && rm -rf /tmp/chrome-agent/src
+
 # Create app directory
 WORKDIR /app
 
