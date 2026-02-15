@@ -2,6 +2,8 @@
   <img src="assets/nanoclaw-logo.png" alt="NanoClaw" width="400">
 </p>
 
+> **Note:** This repository has been superseded by [claw42](https://github.com/gavrielc/claw42). New development is happening there.
+
 <p align="center">
   My personal Claude assistant that runs securely in containers. Lightweight and built to be understood and customized for your own needs.
 </p>
