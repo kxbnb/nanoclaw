@@ -22,6 +22,9 @@ export async function navigate(cdp: CdpClient, url: string, sessionId?: string):
   }
 
   await loaded;
+
+  // Bring the tab to the foreground so it's visible in noVNC/display
+  await cdp.send("Page.bringToFront", undefined, sessionId);
 }
 
 /**

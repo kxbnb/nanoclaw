@@ -47,6 +47,9 @@ export class WebChannel implements Channel {
         if (req.method === 'GET' && (req.url === '/' || req.url === '')) {
           res.writeHead(200, { 'Content-Type': 'text/html; charset=utf-8' });
           res.end(getHtml());
+        } else if (req.method === 'GET' && req.url === '/health') {
+          res.writeHead(200, { 'Content-Type': 'application/json' });
+          res.end(JSON.stringify({ status: 'ok', clients: this.clients.size }));
         } else {
           res.writeHead(404);
           res.end('Not found');
@@ -70,23 +73,30 @@ export class WebChannel implements Channel {
         logger.info({ clients: this.clients.size }, 'Web client connected');
 
         ws.on('message', (data) => {
+          let parsed: { type?: string; text?: string } | undefined;
           try {
-            const msg = JSON.parse(String(data));
-            if (msg.type === 'message' && typeof msg.text === 'string' && msg.text.trim()) {
-              const now = new Date().toISOString();
+            parsed = JSON.parse(String(data));
+          } catch {
+            logger.debug('Invalid WebSocket JSON from web client');
+            return;
+          }
+          if (parsed?.type === 'message' && typeof parsed.text === 'string' && parsed.text.trim()) {
+            const now = new Date().toISOString();
+            try {
               this.opts.onMessage(WEB_JID, {
                 id: `web-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
                 chat_jid: WEB_JID,
                 sender: 'user@web.nanoclaw',
                 sender_name: 'User',
-                content: msg.text.trim(),
+                content: parsed.text.trim(),
                 timestamp: now,
                 is_from_me: false,
                 is_bot_message: false,
               });
+              logger.debug({ content: parsed.text.trim().slice(0, 100) }, 'Web message stored');
+            } catch (err) {
+              logger.error({ err }, 'Failed to store web message');
             }
-          } catch {
-            logger.debug('Invalid WebSocket message from web client');
           }
         });
 

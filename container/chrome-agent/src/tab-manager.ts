@@ -9,7 +9,7 @@ export type TabInfo = {
 
 export interface TabManager {
   createTab(url?: string): Promise<string>;
-  attach(targetId: string): Promise<string>;
+  attach(targetId: string, url?: string, title?: string): Promise<string>;
   closeTab(tabId: string): Promise<void>;
   getTab(tabId: string): TabInfo | undefined;
   listTabs(): TabInfo[];
@@ -65,7 +65,7 @@ export function createTabManager(cdp: CdpClient): TabManager {
       return targetId;
     },
 
-    async attach(targetId: string): Promise<string> {
+    async attach(targetId: string, url?: string, title?: string): Promise<string> {
       const result = (await cdp.send("Target.attachToTarget", {
         targetId,
         flatten: true,
@@ -75,7 +75,7 @@ export function createTabManager(cdp: CdpClient): TabManager {
         throw new Error("Target.attachToTarget returned no sessionId");
       }
 
-      tabs.set(targetId, { tabId: targetId, sessionId, url: "", title: "" });
+      tabs.set(targetId, { tabId: targetId, sessionId, url: url ?? "", title: title ?? "" });
       return sessionId;
     },
 

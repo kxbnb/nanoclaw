@@ -185,6 +185,11 @@ async function processGroupMessages(chatJid: string): Promise<boolean> {
       resetIdleTimer();
     }
 
+    // Clear typing after each result (agent sent a response) or session-update
+    // (result: null = agent idle, waiting for next message). The container stays
+    // alive across messages, so we can't wait for processGroupMessages to return.
+    if (ch?.setTyping) await ch.setTyping(chatJid, false);
+
     if (result.status === 'error') {
       hadError = true;
     }
@@ -470,6 +475,9 @@ async function main(): Promise<void> {
     });
     await webChannel.connect();
     channels.push(webChannel);
+
+    // Ensure web chat exists in the chats table (FK for messages)
+    storeChatMetadata(WebChannel.JID, new Date().toISOString(), 'Web Chat');
 
     // Auto-register web JID so messages are processed
     if (!registeredGroups[WebChannel.JID]) {

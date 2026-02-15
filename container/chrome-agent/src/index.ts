@@ -36,15 +36,18 @@ export class ChromeAgent {
 
     const agent = new ChromeAgent(cdp);
 
-    // Attach to the first available page target
+    // Attach to all available page targets so tabs list shows everything
     const targets = (await cdp.send("Target.getTargets")) as {
-      targetInfos?: Array<{ targetId: string; type: string; url: string }>;
+      targetInfos?: Array<{ targetId: string; type: string; url: string; title: string }>;
     };
-    const page = targets?.targetInfos?.find((t) => t.type === "page");
-    if (page) {
-      const sessionId = await agent.tabs.attach(page.targetId);
-      agent.currentTabId = page.targetId;
-      agent.currentSessionId = sessionId;
+    const pages = targets?.targetInfos?.filter((t) => t.type === "page") ?? [];
+    for (const page of pages) {
+      const sessionId = await agent.tabs.attach(page.targetId, page.url, page.title);
+      // Set the first page as the current/active tab
+      if (!agent.currentTabId) {
+        agent.currentTabId = page.targetId;
+        agent.currentSessionId = sessionId;
+      }
     }
 
     return agent;
@@ -109,6 +112,8 @@ export class ChromeAgent {
     this.currentTabId = tabId;
     this.currentSessionId = tab.sessionId;
     this.refs.clear();
+    // Bring the tab to the foreground so it's visible in noVNC/display
+    await this.cdp.send("Page.bringToFront", undefined, tab.sessionId);
   }
 
   /** Close a tab (defaults to current tab). */
