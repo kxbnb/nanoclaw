@@ -59,6 +59,11 @@ export const TRIGGER_PATTERN = new RegExp(
   'i',
 );
 
+// Channel toggles
+export const WHATSAPP_ENABLED = process.env.WHATSAPP_ENABLED === '1'; // opt-in
+export const WEB_PORT = parseInt(process.env.WEB_PORT || '3000', 10);
+export const WEB_ENABLED = process.env.WEB_ENABLED !== '0'; // enabled by default
+
 // Timezone for scheduled tasks (cron expressions, etc.)
 // Uses system timezone by default
 export const TIMEZONE =

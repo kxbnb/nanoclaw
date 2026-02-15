@@ -9,7 +9,10 @@ import {
   MAIN_GROUP_FOLDER,
   POLL_INTERVAL,
   TRIGGER_PATTERN,
+  WHATSAPP_ENABLED,
+  WEB_ENABLED,
 } from './config.js';
+import { WebChannel } from './channels/web.js';
 import { WhatsAppChannel } from './channels/whatsapp.js';
 import {
   ContainerOutput,
@@ -34,9 +37,9 @@ import {
 } from './db.js';
 import { GroupQueue } from './group-queue.js';
 import { startIpcWatcher } from './ipc.js';
-import { formatMessages, formatOutbound } from './router.js';
+import { findChannel, formatMessages, formatOutbound, routeOutbound } from './router.js';
 import { startSchedulerLoop } from './task-scheduler.js';
-import { NewMessage, RegisteredGroup } from './types.js';
+import { Channel, NewMessage, RegisteredGroup } from './types.js';
 import { logger } from './logger.js';
 
 // Re-export for backwards compatibility during refactor
@@ -49,6 +52,7 @@ let lastAgentTimestamp: Record<string, string> = {};
 let messageLoopRunning = false;
 
 let whatsapp: WhatsAppChannel;
+let channels: Channel[] = [];
 const queue = new GroupQueue();
 
 function loadState(): void {
@@ -161,7 +165,8 @@ async function processGroupMessages(chatJid: string): Promise<boolean> {
     }, IDLE_TIMEOUT);
   };
 
-  await whatsapp.setTyping(chatJid, true);
+  const ch = findChannel(channels, chatJid);
+  if (ch?.setTyping) await ch.setTyping(chatJid, true);
   let hadError = false;
   let outputSentToUser = false;
 
@@ -173,7 +178,7 @@ async function processGroupMessages(chatJid: string): Promise<boolean> {
       const text = raw.replace(/<internal>[\s\S]*?<\/internal>/g, '').trim();
       logger.info({ group: group.name }, `Agent output: ${raw.slice(0, 200)}`);
       if (text) {
-        await whatsapp.sendMessage(chatJid, text);
+        await routeOutbound(channels, chatJid, text);
         outputSentToUser = true;
       }
       // Only reset idle timer on actual results, not session-update markers (result: null)
@@ -185,7 +190,7 @@ async function processGroupMessages(chatJid: string): Promise<boolean> {
     }
   });
 
-  await whatsapp.setTyping(chatJid, false);
+  if (ch?.setTyping) await ch.setTyping(chatJid, false);
   if (idleTimer) clearTimeout(idleTimer);
 
   if (output === 'error' || hadError) {
@@ -353,7 +358,8 @@ async function startMessageLoop(): Promise<void> {
               messagesToSend[messagesToSend.length - 1].timestamp;
             saveState();
             // Show typing indicator while the container processes the piped message
-            whatsapp.setTyping(chatJid, true);
+            const pipeCh = findChannel(channels, chatJid);
+            if (pipeCh?.setTyping) pipeCh.setTyping(chatJid, true);
           } else {
             // No active container — enqueue for a new one
             queue.enqueueMessageCheck(chatJid);
@@ -440,21 +446,47 @@ async function main(): Promise<void> {
   const shutdown = async (signal: string) => {
     logger.info({ signal }, 'Shutdown signal received');
     await queue.shutdown(10000);
-    await whatsapp.disconnect();
+    await Promise.all(channels.map((c) => c.disconnect()));
     process.exit(0);
   };
   process.on('SIGTERM', () => shutdown('SIGTERM'));
   process.on('SIGINT', () => shutdown('SIGINT'));
 
-  // Create WhatsApp channel
-  whatsapp = new WhatsAppChannel({
-    onMessage: (chatJid, msg) => storeMessage(msg),
-    onChatMetadata: (chatJid, timestamp) => storeChatMetadata(chatJid, timestamp),
-    registeredGroups: () => registeredGroups,
-  });
+  // Start WhatsApp channel (opt-in via WHATSAPP_ENABLED=1)
+  if (WHATSAPP_ENABLED) {
+    whatsapp = new WhatsAppChannel({
+      onMessage: (chatJid, msg) => storeMessage(msg),
+      onChatMetadata: (chatJid, timestamp) => storeChatMetadata(chatJid, timestamp),
+      registeredGroups: () => registeredGroups,
+    });
+    await whatsapp.connect();
+    channels.push(whatsapp);
+  }
 
-  // Connect — resolves when first connected
-  await whatsapp.connect();
+  // Start web channel (shares the same "main" agent workspace)
+  if (WEB_ENABLED) {
+    const webChannel = new WebChannel({
+      onMessage: (chatJid, msg) => storeMessage(msg),
+    });
+    await webChannel.connect();
+    channels.push(webChannel);
+
+    // Auto-register web JID so messages are processed
+    if (!registeredGroups[WebChannel.JID]) {
+      registerGroup(WebChannel.JID, {
+        name: 'Web Chat',
+        folder: MAIN_GROUP_FOLDER,
+        trigger: `@${ASSISTANT_NAME}`,
+        added_at: new Date().toISOString(),
+        requiresTrigger: false,
+      });
+    }
+  }
+
+  if (channels.length === 0) {
+    logger.error('No channels enabled. Set WHATSAPP_ENABLED=1 or WEB_ENABLED=1');
+    process.exit(1);
+  }
 
   // Start subsystems (independently of connection handler)
   startSchedulerLoop({
@@ -464,14 +496,14 @@ async function main(): Promise<void> {
     onProcess: (groupJid, proc, containerName, groupFolder) => queue.registerProcess(groupJid, proc, containerName, groupFolder),
     sendMessage: async (jid, rawText) => {
       const text = formatOutbound(rawText);
-      if (text) await whatsapp.sendMessage(jid, text);
+      if (text) await routeOutbound(channels, jid, text);
     },
   });
   startIpcWatcher({
-    sendMessage: (jid, text) => whatsapp.sendMessage(jid, text),
+    sendMessage: (jid, text) => routeOutbound(channels, jid, text),
     registeredGroups: () => registeredGroups,
     registerGroup,
-    syncGroupMetadata: (force) => whatsapp.syncGroupMetadata(force),
+    syncGroupMetadata: (force) => whatsapp?.syncGroupMetadata(force) ?? Promise.resolve(),
     getAvailableGroups,
     writeGroupsSnapshot: (gf, im, ag, rj) => writeGroupsSnapshot(gf, im, ag, rj),
   });
